@@ -120,6 +120,7 @@ add_custom_command(
       -linalg-bufferize
       -finalizing-bufferize
       -batchmatmul-optimize
+      -
       -convert-linalg-to-affine-loops
       -lower-affine
       -convert-vector-to-scf
