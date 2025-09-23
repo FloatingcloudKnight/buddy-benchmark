@@ -1,117 +1,65 @@
+
 # Buddy Compiler LLaMA Example
 
-1. Download LLaMA2 model
+1. Generate computational graphs and parameter files
 
-You should download llama model. You can get model from [meta ai](https://ai.meta.com/llama/).
+All MLIR files and parameter files must be generated first. Please refer to [LlaMa/examples/SplitLlama at main · FloatingcloudKnight/LlaMa](https://github.com/FloatingcloudKnight/LlaMa/tree/main/examples/SplitLlama)  
 
-2. Enter Python virtual environment
+   
+  
+  
+2. Modify the CMakeLists file
 
-We recommend you to use anaconda3 to create python virtual environment. You should install python packages as buddy-mlir/requirements.
-
-```
-$ conda activate <your virtual environment name>
-$ cd buddy-mlir
-$ pip install -r requirements.txt
-```
-
-3. LLaMA2 model convert to HuggingFace format
-
-You should convert LLaMA2 model which download from meta ai to HuggingFace format. Because we use HuggingFace api to get LLaMA2 model.
+Since the distributed system utilizes websocketpp, please ensure that a compiled Boost library and websocketpp header files are present on your computer before compiling. Additionally, modify the following two paths in the CMakeLists file:
 
 ```
-$ cd examples/BuddyLlama
-$ python llama2-to-hf.py --input_dir path-to-llama2-model --model_size 7B --output_dir path-to-save-llama-hf-model
+set(Boost_INCLUDE_DIR "/YOUR_BOOST_PATH")
+include_directories(/YOUR_WEBSOCKETPP_PATH)
 ```
 
-Such as you have a 7B LLaMA2 model, in your input_dir path-to-llama-model, you should have a tokenizer.model and a directory named "7B". You should put your 7B LLaMA2 model inside the "7B" directory.
 
-In addition, set an environment variable for the generated LLaMA model.
-```
-$ export LLAMA_MODEL_PATH=/path-to-save-llama-hf-model/
-```
 
-4. Build and check LLVM/MLIR
+Next, you need to modify the following paths, which are are used to read  parameters after the device starts running.
 
 ```
-$ cd buddy-mlir
-$ mkdir llvm/build
-$ cd llvm/build
-$ cmake -G Ninja ../llvm \
-    -DLLVM_ENABLE_PROJECTS="mlir;clang;openmp" \
-    -DLLVM_TARGETS_TO_BUILD="host;RISCV" \
-    -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
-    -DCMAKE_BUILD_TYPE=RELEASE \
-    -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-    -DPython3_EXECUTABLE=$(which python3)
-$ ninja check-clang check-mlir omp
+set(LLAMA_SPLIT_EXAMPLE_PATH "/YOUR_RUNTIME_PATH")
+set(LLAMA_EXAMPLE_BUILD_PATH "/YOUR_RUNTIME_PATH")
 ```
 
-5. Build and check buddy-mlir
+
+
+The current model employs a fixed distributed communication scheme where a single device handles both input and output (Device 1). Subsequently, every two devices jointly process one or multiple layers of the model. Assuming Device 1 handles input and output, Devices 2 and 3 process the first 16 layers, while Devices 4 and 5 process the last 16 layers.
+
+Reference: Each device requires approximately 3.1 GB of storage space to run the model's 8 layers (more precisely, half of 8 layers). The runtime memory usage is approximately 4 GB.
+
+
+
+After determining the number of devices and assigning responsibilities, modify the IP addresses and port numbers of the devices in cmakelisit. IP addresses must use IPv6.
 
 ```
-$ cd buddy-mlir
-$ mkdir build
-$ cd build
-$ cmake -G Ninja .. \
-    -DMLIR_DIR=$PWD/../llvm/build/lib/cmake/mlir \
-    -DLLVM_DIR=$PWD/../llvm/build/lib/cmake/llvm \
-    -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DCMAKE_BUILD_TYPE=RELEASE \
-    -DBUDDY_MLIR_ENABLE_PYTHON_PACKAGES=ON \
-    -DPython3_EXECUTABLE=$(which python3) 
-$ ninja
-$ ninja check-buddy
+set(DEVICEn "DEVICE_IP")
 ```
 
-Set the `PYTHONPATH` environment variable. Make sure that the `PYTHONPATH` variable includes the directory of LLVM/MLIR python bindings and the directory of Buddy MLIR python packages.
+Modules requiring segmentation, such as MHA and MLP, generate a separate program for each device. Therefore, the number of compiled programs and their suffixes must be configured. For example, two sets of devices:
 
 ```
-$ export PYTHONPATH=/path-to-buddy-mlir/llvm/build/tools/mlir/python_packages/mlir_core:/path-to-buddy-mlir/build/python_packages:${PYTHONPATH}
-
-// For example:
-// Navigate to your buddy-mlir/build directory
-$ cd buddy-mlir/build
-$ export BUDDY_MLIR_BUILD_DIR=$PWD
-$ export LLVM_MLIR_BUILD_DIR=$PWD/../llvm/build
-$ export PYTHONPATH=${LLVM_MLIR_BUILD_DIR}/tools/mlir/python_packages/mlir_core:${BUDDY_MLIR_BUILD_DIR}/python_packages:${PYTHONPATH}
+set(PART_NUMS 2)
+set(RUNNER_IDS 0 1)
 ```
 
-6. Build and run LLaMA example
+
+
+3. Configure the environment and compile the program
+
+   Please refer to  [buddy-benchmark/benchmarks/DeepLearning at main · buddy-compiler/buddy-benchmark](https://github.com/buddy-compiler/buddy-benchmark/tree/main/benchmarks/DeepLearning)
+
+   
+
+   Compile the program using the ninja command, as shown below:：
 
 ```
-$ cmake -G Ninja .. -DBUDDY_SPLIT_LLAMA_EXAMPLES=ON
-$ ninja buddy-llama-xxxx-run
-// For example: 
-$ ninja buddy-llama-input-run
-
-$ cd bin
-$ ./buddy-dis-llama-run
-// For example: 
-$ ./buddy-llama-input-run
-```
-This build will spend a few minutes. We recommend you to use better cpu such as server-level cpu to run buddy-llama-run.
-
-If you wish to utilize `mimalloc` as a memory allocator, you need to set `BUDDY_MLIR_USE_MIMALLOC` and `MIMALLOC_BUILD_DIR`.
-For more details, please see [here](../../thirdparty/README.md#the-mimalloc-allocator).
-
-## Testing the segmentation model using a py file
-
-1. Set the `PYTHONPATH` environment variable. Make sure that the `PYTHONPATH` variable includes the directory of LLVM/MLIR python bindings and the directory of Buddy MLIR python packages.
-
-```
-$ export PYTHONPATH=/path-to-buddy-mlir/llvm/build/tools/mlir/python_packages/mlir_core:/path-to-buddy-mlir/build/python_packages:${PYTHONPATH}
-
-// For example:
-// Navigate to your buddy-mlir/build directory
-$ cd buddy-mlir/build
-$ export BUDDY_MLIR_BUILD_DIR=$PWD
-$ export LLVM_MLIR_BUILD_DIR=$PWD/../llvm/build
-$ export PYTHONPATH=${LLVM_MLIR_BUILD_DIR}/tools/mlir/python_packages/mlir_core:${BUDDY_MLIR_BUILD_DIR}/python_packages:${PYTHONPATH}
+ninja buddy-llama-all-runs # Generate all programs at once
+ninja buddy-llama-mha-run  # Compiling a set of programs generated from one of the modules
+ninja buddy-llama-mha-run-1 # Compiling a single program
 ```
 
-2. Execute the py file
-```
-$ cd examples/LlamaTest
-$ python3 llama-import.py --output-dir ./
-```
